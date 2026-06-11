@@ -231,6 +231,14 @@
   }
   .btn-save { background: var(--in); color: #06130A; }
   .btn-cancel { background: var(--surface-2); color: var(--text); }
+  .btn-delete {
+    background: none;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    width: 100%;
+    margin-top: 18px;
+    display: none;
+  }
 
   @media (prefers-reduced-motion: reduce) {
     #sheet, header, #reader-wrap, #readout { transition: none; }
@@ -283,7 +291,7 @@
 <!-- NEW ITEM SHEET -->
 <div id="sheet-backdrop"></div>
 <div id="sheet">
-  <h2>New Item</h2>
+  <h2 id="sheet-title">New Item</h2>
   <div class="barcode-tag" id="sheet-barcode"></div>
   <label for="ni-name">Name (required)</label>
   <input id="ni-name" autocomplete="off">
@@ -291,11 +299,12 @@
   <textarea id="ni-desc" rows="2"></textarea>
   <label for="ni-price">Price</label>
   <input id="ni-price" class="mono" inputmode="decimal" placeholder="0.00">
-  <label for="ni-qty">Initial quantity</label>
+  <label for="ni-qty" id="ni-qty-label">Initial quantity</label>
   <input id="ni-qty" class="mono" inputmode="numeric">
   <label for="ni-photo">Photo</label>
-  <input id="ni-photo" type="file" accept="image/*" capture="environment">
+  <input id="ni-photo" type="file" accept="image/*">
   <img id="photo-preview" alt="Item photo preview">
+  <button class="btn btn-delete" id="btn-delete">Delete Item</button>
   <div class="sheet-actions">
     <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
     <button class="btn btn-save" id="btn-save">Save Item</button>
@@ -450,10 +459,15 @@ function startScanner() {
   });
 }
 
-/* ---------- new item sheet ---------- */
+/* ---------- new item / edit sheet ---------- */
+let sheetEditCode = null;
+
 function openSheet(barcode, qty) {
-  sheetOpen = true;
+  sheetEditCode = null;
   pendingPhotoDataUrl = null;
+  $('sheet-title').textContent = 'New Item';
+  $('ni-qty-label').textContent = 'Initial quantity';
+  $('btn-delete').style.display = 'none';
   $('sheet-barcode').textContent = barcode;
   $('ni-name').value = '';
   $('ni-desc').value = '';
@@ -461,6 +475,35 @@ function openSheet(barcode, qty) {
   $('ni-qty').value = qty;
   $('ni-photo').value = '';
   $('photo-preview').style.display = 'none';
+  showSheet();
+}
+
+function openEditSheet(barcode) {
+  const item = items[barcode];
+  if (!item) { alert(`No item found for barcode ${barcode}.`); return; }
+  sheetEditCode = barcode;
+  pendingPhotoDataUrl = item.img || null;
+  $('sheet-title').textContent = 'Edit Item';
+  $('ni-qty-label').textContent = 'Quantity in stock';
+  $('btn-delete').style.display = 'block';
+  $('sheet-barcode').textContent = barcode;
+  $('ni-name').value = item.name;
+  $('ni-desc').value = item.desc;
+  $('ni-price').value = item.price > 0 ? item.price : '';
+  $('ni-qty').value = item.qty;
+  $('ni-photo').value = '';
+  const preview = $('photo-preview');
+  if (item.img) {
+    preview.src = item.img;
+    preview.style.display = 'block';
+  } else {
+    preview.style.display = 'none';
+  }
+  showSheet();
+}
+
+function showSheet() {
+  sheetOpen = true;
   $('sheet').classList.add('open');
   $('sheet-backdrop').classList.add('open');
 }
@@ -504,12 +547,31 @@ $('btn-save').addEventListener('click', () => {
   if (!name) { alert('Item name is required.'); return; }
 
   const qty = parseInt($('ni-qty').value, 10);
-  if (!Number.isInteger(qty) || qty < 0) { alert('Initial quantity must be zero or more.'); return; }
+  if (!Number.isInteger(qty) || qty < 0) { alert('Quantity must be zero or more.'); return; }
 
   let price = 0;
   if ($('ni-price').value.trim() !== '') {
     price = parseFloat($('ni-price').value);
     if (!Number.isFinite(price) || price < 0) { alert('Price must be a number, or leave it blank.'); return; }
+  }
+
+  const username = $('username').value.trim();
+
+  if (sheetEditCode) {
+    const item = items[sheetEditCode];
+    if (qty !== item.qty) {
+      if (!username) { alert('Quantity changes are logged — enter a username on the Scan tab first.'); return; }
+      appendLog(sheetEditCode, name, username, qty - item.qty, qty);
+    }
+    item.name = name;
+    item.desc = $('ni-desc').value.trim();
+    item.price = price;
+    item.qty = qty;
+    item.img = pendingPhotoDataUrl;
+    persist();
+    closeSheet();
+    renderStock();
+    return;
   }
 
   items[barcode] = {
@@ -520,10 +582,24 @@ $('btn-save').addEventListener('click', () => {
     img: pendingPhotoDataUrl,
     created: Date.now()
   };
-  appendLog(barcode, name, $('username').value.trim(), qty, qty);
+  appendLog(barcode, name, username, qty, qty);
   persist();
   closeSheet();
   readout(`${name}: registered with ${qty} in stock`);
+});
+
+$('btn-delete').addEventListener('click', () => {
+  if (!sheetEditCode) return;
+  const item = items[sheetEditCode];
+  const username = $('username').value.trim();
+  if (!username) { alert('Deletions are logged — enter a username on the Scan tab first.'); return; }
+  if (!confirm(`Delete "${item.name}" and its ${item.qty} in stock? The scan history is kept.`)) return;
+
+  appendLog(sheetEditCode, `${item.name} (deleted)`, username, -item.qty, 0);
+  delete items[sheetEditCode];
+  persist();
+  closeSheet();
+  renderStock();
 });
 
 /* ---------- stock list ---------- */
@@ -540,7 +616,7 @@ function renderStock() {
       ? `<img src="${it.img}" alt="">`
       : '<div class="img-blank"></div>';
     const price = it.price > 0 ? ` · $${it.price.toFixed(2)}` : '';
-    return `<div class="card">
+    return `<div class="card" data-code="${escapeHtml(code)}">
       ${img}
       <div>
         <div class="name">${escapeHtml(it.name)}</div>
@@ -549,6 +625,9 @@ function renderStock() {
       <div class="qty${it.qty === 0 ? ' zero' : ''}">${it.qty}</div>
     </div>`;
   }).join('');
+  container.querySelectorAll('.card').forEach((el) => {
+    el.addEventListener('click', () => openEditSheet(el.dataset.code));
+  });
 }
 
 /* ---------- log list ---------- */
