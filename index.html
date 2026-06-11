@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#15181C">
+<title>Inventory Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root {
+    --ink: #15181C;
+    --surface: #1F242B;
+    --surface-2: #2A313A;
+    --line: #3A434E;
+    --text: #E8EAED;
+    --text-dim: #98A2AD;
+    --in: #3FB950;
+    --in-dim: #1C4428;
+    --out: #F0883E;
+    --out-dim: #4A2E14;
+    --danger: #F85149;
+    --mode: var(--in);
+    --mode-dim: var(--in-dim);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  h1, h2, .tab, .mode-btn, .sheet h2 {
+    font-family: 'Saira Condensed', system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+
+  header {
+    padding: 10px 16px 8px;
+    border-bottom: 3px solid var(--mode);
+    transition: border-color 0.2s;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  header h1 { font-size: 20px; font-weight: 700; }
+  header .mode-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--mode);
+    transition: color 0.2s;
+  }
+
+  main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .panel { display: none; padding: 14px 14px 90px; }
+  .panel.active { display: block; }
+
+  /* ---- Scan panel ---- */
+  .field-row { display: grid; grid-template-columns: 1fr 88px; gap: 10px; margin-bottom: 10px; }
+  input, textarea {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 16px;
+    padding: 12px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--mode); outline-offset: -1px; border-color: transparent; }
+
+  .mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .mode-btn {
+    padding: 16px 0;
+    font-size: 18px;
+    font-weight: 700;
+    background: var(--surface);
+    color: var(--text-dim);
+    border: none;
+    cursor: pointer;
+  }
+  .mode-btn.active-in { background: var(--in-dim); color: var(--in); box-shadow: inset 0 -4px 0 var(--in); }
+  .mode-btn.active-out { background: var(--out-dim); color: var(--out); box-shadow: inset 0 -4px 0 var(--out); }
+
+  #reader-wrap {
+    border: 2px solid var(--mode);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+    min-height: 260px;
+    transition: border-color 0.2s;
+    position: relative;
+  }
+  #reader { width: 100%; }
+  #camera-msg {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 20px; color: var(--text-dim); font-size: 14px;
+  }
+
+  #readout {
+    margin-top: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--mode);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    min-height: 46px;
+    transition: border-color 0.2s;
+    word-break: break-word;
+  }
+  #readout.error { border-left-color: var(--danger); color: var(--danger); }
+
+  /* ---- Lists ---- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .card img, .card .img-blank {
+    width: 48px; height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: var(--surface-2);
+  }
+  .card .name { font-weight: 600; font-size: 15px; }
+  .card .sub { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+  .card .qty {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 24px;
+    font-weight: 600;
+    text-align: right;
+  }
+  .card .qty.zero { color: var(--danger); }
+
+  .log-row {
+    border-bottom: 1px solid var(--line);
+    padding: 10px 4px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .log-row .delta { font-family: 'IBM Plex Mono', monospace; font-size: 17px; font-weight: 600; white-space: nowrap; }
+  .delta.pos { color: var(--in); }
+  .delta.neg { color: var(--out); }
+  .log-row .sub { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+
+  .empty { color: var(--text-dim); text-align: center; padding: 40px 20px; font-size: 14px; }
+
+  .ghost-btn {
+    width: 100%;
+    background: none;
+    border: 1px dashed var(--line);
+    color: var(--text-dim);
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 14px;
+    margin-top: 8px;
+    cursor: pointer;
+  }
+
+  /* ---- Bottom tabs ---- */
+  nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tab {
+    padding: 14px 0 12px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tab.active { color: var(--mode); box-shadow: inset 0 3px 0 var(--mode); }
+
+  /* ---- New item sheet ---- */
+  #sheet-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+  }
+  #sheet {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--surface);
+    border-top: 3px solid var(--mode);
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    transform: translateY(100%);
+    transition: transform 0.25s ease;
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+  #sheet.open { transform: translateY(0); }
+  #sheet-backdrop.open { display: block; }
+  #sheet h2 { font-size: 20px; margin-bottom: 4px; }
+  #sheet .barcode-tag { font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); font-size: 13px; margin-bottom: 14px; word-break: break-all; }
+  #sheet label { display: block; font-size: 12px; color: var(--text-dim); margin: 12px 0 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  #photo-preview { width: 100%; max-height: 180px; object-fit: contain; border-radius: 8px; margin-top: 10px; display: none; background: var(--ink); }
+  .sheet-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 18px; }
+  .btn {
+    border: none;
+    border-radius: 8px;
+    padding: 15px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-save { background: var(--in); color: #06130A; }
+  .btn-cancel { background: var(--surface-2); color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #sheet, header, #reader-wrap, #readout { transition: none; }
+  }
+</style>
+</head>
+<body data-mode="in">
+
+<header>
+  <h1>Inventory</h1>
+  <span class="mode-tag" id="mode-tag">MODE: INCOMING</span>
+</header>
+
+<main>
+  <!-- SCAN -->
+  <section class="panel active" id="panel-scan">
+    <div class="field-row">
+      <input id="username" placeholder="Username" autocomplete="off">
+      <input id="qty" class="mono" inputmode="numeric" value="1" aria-label="Quantity">
+    </div>
+    <div class="mode-switch">
+      <button class="mode-btn active-in" id="btn-in">Incoming</button>
+      <button class="mode-btn" id="btn-out">Outgoing</button>
+    </div>
+    <div id="reader-wrap">
+      <div id="reader"></div>
+      <div id="camera-msg">Starting camera…</div>
+    </div>
+    <div id="readout" class="mono">Point the camera at a barcode</div>
+  </section>
+
+  <!-- STOCK -->
+  <section class="panel" id="panel-stock">
+    <div id="stock-list"></div>
+  </section>
+
+  <!-- LOG -->
+  <section class="panel" id="panel-log">
+    <div id="log-list"></div>
+    <button class="ghost-btn" id="btn-export">Export data as JSON</button>
+  </section>
+</main>
+
+<nav>
+  <button class="tab active" data-panel="scan">Scan</button>
+  <button class="tab" data-panel="stock">Stock</button>
+  <button class="tab" data-panel="log">Log</button>
+</nav>
+
+<!-- NEW ITEM SHEET -->
+<div id="sheet-backdrop"></div>
+<div id="sheet">
+  <h2>New Item</h2>
+  <div class="barcode-tag" id="sheet-barcode"></div>
+  <label for="ni-name">Name (required)</label>
+  <input id="ni-name" autocomplete="off">
+  <label for="ni-desc">Description</label>
+  <textarea id="ni-desc" rows="2"></textarea>
+  <label for="ni-price">Price</label>
+  <input id="ni-price" class="mono" inputmode="decimal" placeholder="0.00">
+  <label for="ni-qty">Initial quantity</label>
+  <input id="ni-qty" class="mono" inputmode="numeric">
+  <label for="ni-photo">Photo</label>
+  <input id="ni-photo" type="file" accept="image/*" capture="environment">
+  <img id="photo-preview" alt="Item photo preview">
+  <div class="sheet-actions">
+    <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
+    <button class="btn btn-save" id="btn-save">Save Item</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const STORAGE_ITEMS_KEY = 'inv_items';
+const STORAGE_LOG_KEY = 'inv_log';
+const STORAGE_USER_KEY = 'inv_user';
+const SCAN_COOLDOWN_MS = 3000;
+const LOG_DISPLAY_LIMIT = 200;
+const PHOTO_MAX_DIMENSION = 320;
+const PHOTO_JPEG_QUALITY = 0.7;
+
+const MODES = {
+  in:  { label: 'INCOMING', color: 'var(--in)',  dim: 'var(--in-dim)'  },
+  out: { label: 'OUTGOING', color: 'var(--out)', dim: 'var(--out-dim)' }
+};
+
+let mode = 'in';
+let items = loadJson(STORAGE_ITEMS_KEY, {});
+let log = loadJson(STORAGE_LOG_KEY, []);
+let lastBarcode = null;
+let lastScanAt = 0;
+let sheetOpen = false;
+let pendingPhotoDataUrl = null;
+let scanner = null;
+
+const $ = (id) => document.getElementById(id);
+
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (err) {
+    alert(`Stored data for "${key}" is corrupt and was ignored: ${err.message}`);
+    return fallback;
+  }
+}
+
+function persist() {
+  try {
+    localStorage.setItem(STORAGE_ITEMS_KEY, JSON.stringify(items));
+    localStorage.setItem(STORAGE_LOG_KEY, JSON.stringify(log));
+  } catch (err) {
+    alert(`Save failed — storage is full or blocked: ${err.message}`);
+    throw err;
+  }
+}
+
+/* ---------- mode ---------- */
+function setMode(next) {
+  mode = next;
+  const m = MODES[mode];
+  document.documentElement.style.setProperty('--mode', m.color);
+  document.documentElement.style.setProperty('--mode-dim', m.dim);
+  $('mode-tag').textContent = `MODE: ${m.label}`;
+  $('btn-in').className = 'mode-btn' + (mode === 'in' ? ' active-in' : '');
+  $('btn-out').className = 'mode-btn' + (mode === 'out' ? ' active-out' : '');
+}
+$('btn-in').addEventListener('click', () => setMode('in'));
+$('btn-out').addEventListener('click', () => setMode('out'));
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    $(`panel-${tab.dataset.panel}`).classList.add('active');
+    if (tab.dataset.panel === 'stock') renderStock();
+    if (tab.dataset.panel === 'log') renderLog();
+  });
+});
+
+/* ---------- username ---------- */
+$('username').value = localStorage.getItem(STORAGE_USER_KEY) || '';
+$('username').addEventListener('input', (e) => {
+  localStorage.setItem(STORAGE_USER_KEY, e.target.value.trim());
+});
+
+/* ---------- readout ---------- */
+function readout(msg, isError) {
+  const el = $('readout');
+  el.textContent = msg;
+  el.className = 'mono' + (isError ? ' error' : '');
+}
+
+/* ---------- scanning ---------- */
+function onScan(barcode) {
+  const now = Date.now();
+  if (sheetOpen) return;
+  if (barcode === lastBarcode && now - lastScanAt < SCAN_COOLDOWN_MS) return;
+  lastBarcode = barcode;
+  lastScanAt = now;
+
+  const username = $('username').value.trim();
+  if (!username) {
+    readout('Enter a username before scanning — every scan is logged against one', true);
+    return;
+  }
+
+  const qty = parseInt($('qty').value, 10);
+  if (!Number.isInteger(qty) || qty <= 0) {
+    readout('Quantity must be a positive whole number', true);
+    return;
+  }
+
+  const item = items[barcode];
+
+  if (!item) {
+    if (mode === 'out') {
+      readout(`UNKNOWN: ${barcode} — not in inventory. Switch to Incoming to register it.`, true);
+      return;
+    }
+    openSheet(barcode, qty);
+    return;
+  }
+
+  const delta = mode === 'in' ? qty : -qty;
+  const newQty = item.qty + delta;
+  if (newQty < 0) {
+    readout(`REJECTED: ${item.name} — outgoing ${qty} exceeds stock (${item.qty})`, true);
+    return;
+  }
+
+  item.qty = newQty;
+  appendLog(barcode, item.name, username, delta, newQty);
+  persist();
+  readout(`${item.name}: ${delta > 0 ? '+' : ''}${delta} → ${newQty} in stock`);
+}
+
+function appendLog(barcode, name, username, delta, after) {
+  log.push({ barcode, name, user: username, delta, after, ts: Date.now() });
+}
+
+function startScanner() {
+  scanner = new Html5Qrcode('reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 260, height: 160 } },
+    (decoded) => onScan(decoded),
+    () => {}
+  ).then(() => {
+    $('camera-msg').style.display = 'none';
+  }).catch((err) => {
+    $('camera-msg').textContent =
+      `Camera unavailable: ${err}. This page must be opened over HTTPS and camera permission must be allowed.`;
+  });
+}
+
+/* ---------- new item sheet ---------- */
+function openSheet(barcode, qty) {
+  sheetOpen = true;
+  pendingPhotoDataUrl = null;
+  $('sheet-barcode').textContent = barcode;
+  $('ni-name').value = '';
+  $('ni-desc').value = '';
+  $('ni-price').value = '';
+  $('ni-qty').value = qty;
+  $('ni-photo').value = '';
+  $('photo-preview').style.display = 'none';
+  $('sheet').classList.add('open');
+  $('sheet-backdrop').classList.add('open');
+}
+
+function closeSheet() {
+  sheetOpen = false;
+  $('sheet').classList.remove('open');
+  $('sheet-backdrop').classList.remove('open');
+}
+
+$('btn-cancel').addEventListener('click', closeSheet);
+$('sheet-backdrop').addEventListener('click', closeSheet);
+
+$('ni-photo').addEventListener('change', () => {
+  const file = $('ni-photo').files[0];
+  if (!file) return;
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const scale = Math.min(1, PHOTO_MAX_DIMENSION / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    pendingPhotoDataUrl = canvas.toDataURL('image/jpeg', PHOTO_JPEG_QUALITY);
+    const preview = $('photo-preview');
+    preview.src = pendingPhotoDataUrl;
+    preview.style.display = 'block';
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    alert('Could not read that image file.');
+  };
+  img.src = url;
+});
+
+$('btn-save').addEventListener('click', () => {
+  const barcode = $('sheet-barcode').textContent;
+  const name = $('ni-name').value.trim();
+  if (!name) { alert('Item name is required.'); return; }
+
+  const qty = parseInt($('ni-qty').value, 10);
+  if (!Number.isInteger(qty) || qty < 0) { alert('Initial quantity must be zero or more.'); return; }
+
+  let price = 0;
+  if ($('ni-price').value.trim() !== '') {
+    price = parseFloat($('ni-price').value);
+    if (!Number.isFinite(price) || price < 0) { alert('Price must be a number, or leave it blank.'); return; }
+  }
+
+  items[barcode] = {
+    name,
+    desc: $('ni-desc').value.trim(),
+    price,
+    qty,
+    img: pendingPhotoDataUrl,
+    created: Date.now()
+  };
+  appendLog(barcode, name, $('username').value.trim(), qty, qty);
+  persist();
+  closeSheet();
+  readout(`${name}: registered with ${qty} in stock`);
+});
+
+/* ---------- stock list ---------- */
+function renderStock() {
+  const container = $('stock-list');
+  const codes = Object.keys(items).sort((a, b) => items[a].name.localeCompare(items[b].name));
+  if (codes.length === 0) {
+    container.innerHTML = '<div class="empty">No items yet. Scan a barcode in Incoming mode to register the first one.</div>';
+    return;
+  }
+  container.innerHTML = codes.map((code) => {
+    const it = items[code];
+    const img = it.img
+      ? `<img src="${it.img}" alt="">`
+      : '<div class="img-blank"></div>';
+    const price = it.price > 0 ? ` · $${it.price.toFixed(2)}` : '';
+    return `<div class="card">
+      ${img}
+      <div>
+        <div class="name">${escapeHtml(it.name)}</div>
+        <div class="sub mono">${escapeHtml(code)}${price}</div>
+      </div>
+      <div class="qty${it.qty === 0 ? ' zero' : ''}">${it.qty}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- log list ---------- */
+function renderLog() {
+  const container = $('log-list');
+  if (log.length === 0) {
+    container.innerHTML = '<div class="empty">No scans recorded yet.</div>';
+    return;
+  }
+  const rows = log.slice(-LOG_DISPLAY_LIMIT).reverse();
+  container.innerHTML = rows.map((entry) => {
+    const sign = entry.delta > 0 ? '+' : '';
+    const cls = entry.delta >= 0 ? 'pos' : 'neg';
+    const when = new Date(entry.ts).toLocaleString();
+    return `<div class="log-row">
+      <div>
+        <div>${escapeHtml(entry.name)}</div>
+        <div class="sub">${escapeHtml(entry.user)} · ${when}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="delta ${cls}">${sign}${entry.delta}</div>
+        <div class="sub mono">stock: ${entry.after}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- export ---------- */
+$('btn-export').addEventListener('click', () => {
+  const blob = new Blob(
+    [JSON.stringify({ exported: new Date().toISOString(), items, log }, null, 2)],
+    { type: 'application/json' }
+  );
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `inventory-export-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ---------- util ---------- */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+setMode('in');
+startScanner();
+</script>
+</body>
+</html>
