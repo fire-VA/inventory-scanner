@@ -138,13 +138,13 @@
   }
   .card.pressed { background: var(--surface-2); }
 
-  #menu-backdrop {
+  #menu-backdrop, #confirm-backdrop {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.6);
     display: none;
   }
-  #menu-backdrop.open { display: block; }
-  #action-menu {
+  #menu-backdrop.open, #confirm-backdrop.open { display: block; }
+  #action-menu, #out-confirm {
     position: fixed;
     left: 50%; top: 50%;
     transform: translate(-50%, -50%);
@@ -155,8 +155,8 @@
     padding: 14px;
     display: none;
   }
-  #action-menu.open { display: block; }
-  #action-menu h3 {
+  #action-menu.open, #out-confirm.open { display: block; }
+  #action-menu h3, #out-confirm h3 {
     font-family: 'Saira Condensed', system-ui, sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -164,6 +164,18 @@
     margin-bottom: 12px;
     word-break: break-word;
   }
+  #out-confirm { border-top: 3px solid var(--out); }
+  #out-confirm .oc-stock { color: var(--text-dim); font-size: 14px; margin-bottom: 4px; }
+  #out-confirm label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 12px 0 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  #out-confirm .sheet-actions { margin-top: 16px; }
+  .btn-out-confirm { background: var(--out); color: #1A0E02; }
   .menu-btn {
     display: block;
     width: 100%;
@@ -336,6 +348,19 @@
   <button class="tab" data-panel="log">Log</button>
 </nav>
 
+<!-- OUTGOING CONFIRM -->
+<div id="confirm-backdrop"></div>
+<div id="out-confirm">
+  <h3 id="oc-title"></h3>
+  <div class="oc-stock mono" id="oc-stock"></div>
+  <label for="oc-qty">Outgoing quantity</label>
+  <input id="oc-qty" class="mono" inputmode="numeric">
+  <div class="sheet-actions">
+    <button class="btn btn-cancel" id="oc-cancel">Cancel</button>
+    <button class="btn btn-out-confirm" id="oc-confirm">Confirm Out</button>
+  </div>
+</div>
+
 <!-- ITEM ACTION MENU -->
 <div id="menu-backdrop"></div>
 <div id="action-menu">
@@ -456,7 +481,7 @@ function readout(msg, isError) {
 /* ---------- scanning ---------- */
 function onScan(barcode) {
   const now = Date.now();
-  if (sheetOpen) return;
+  if (sheetOpen || outConfirmCode) return;
   if (barcode === lastBarcode && now - lastScanAt < SCAN_COOLDOWN_MS) return;
   lastBarcode = barcode;
   lastScanAt = now;
@@ -484,17 +509,18 @@ function onScan(barcode) {
     return;
   }
 
-  const delta = mode === 'in' ? qty : -qty;
-  const newQty = item.qty + delta;
-  if (newQty < 0) {
-    readout(`REJECTED: ${item.name} — outgoing ${qty} exceeds stock (${item.qty})`, true);
+  if (mode === 'out') {
+    if (navigator.vibrate) navigator.vibrate(40);
+    openOutConfirm(barcode, qty);
     return;
   }
 
+  const newQty = item.qty + qty;
   item.qty = newQty;
-  appendLog(barcode, item.name, username, delta, newQty);
+  appendLog(barcode, item.name, username, qty, newQty);
   persist();
-  readout(`${item.name}: ${delta > 0 ? '+' : ''}${delta} → ${newQty} in stock`);
+  if (navigator.vibrate) navigator.vibrate(40);
+  readout(`${item.name}: +${qty} → ${newQty} in stock`);
 }
 
 function appendLog(barcode, name, username, delta, after) {
@@ -563,12 +589,64 @@ function showSheet() {
   sheetOpen = true;
   $('sheet').classList.add('open');
   $('sheet-backdrop').classList.add('open');
+  pauseScanner();
 }
 
 function closeSheet() {
   sheetOpen = false;
   $('sheet').classList.remove('open');
   $('sheet-backdrop').classList.remove('open');
+  lastScanAt = Date.now();
+  resumeScanner();
+}
+
+/* ---------- outgoing confirm ---------- */
+let outConfirmCode = null;
+
+function openOutConfirm(barcode, qty) {
+  const item = items[barcode];
+  outConfirmCode = barcode;
+  $('oc-title').textContent = item.name;
+  $('oc-stock').textContent = `In stock: ${item.qty}`;
+  $('oc-qty').value = qty;
+  $('out-confirm').classList.add('open');
+  $('confirm-backdrop').classList.add('open');
+  pauseScanner();
+}
+
+function closeOutConfirm() {
+  outConfirmCode = null;
+  $('out-confirm').classList.remove('open');
+  $('confirm-backdrop').classList.remove('open');
+  lastScanAt = Date.now();
+  resumeScanner();
+}
+
+$('confirm-backdrop').addEventListener('click', closeOutConfirm);
+$('oc-cancel').addEventListener('click', closeOutConfirm);
+$('oc-confirm').addEventListener('click', () => {
+  const code = outConfirmCode;
+  const item = items[code];
+  if (!item) { closeOutConfirm(); return; }
+
+  const qty = parseInt($('oc-qty').value, 10);
+  if (!Number.isInteger(qty) || qty <= 0) { alert('Quantity must be a positive whole number.'); return; }
+  if (qty > item.qty) { alert(`Outgoing ${qty} exceeds stock (${item.qty}) for ${item.name}.`); return; }
+
+  item.qty -= qty;
+  appendLog(code, item.name, $('username').value.trim(), -qty, item.qty);
+  persist();
+  closeOutConfirm();
+  if (navigator.vibrate) navigator.vibrate(40);
+  readout(`${item.name}: -${qty} → ${item.qty} in stock`);
+});
+
+function pauseScanner() {
+  try { scanner.pause(true); } catch (err) { /* scanner not running */ }
+}
+
+function resumeScanner() {
+  try { scanner.resume(); } catch (err) { /* scanner not running */ }
 }
 
 $('btn-cancel').addEventListener('click', closeSheet);
