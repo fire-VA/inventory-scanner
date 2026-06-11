@@ -164,7 +164,7 @@
     margin-bottom: 12px;
     word-break: break-word;
   }
-  #out-confirm { border-top: 3px solid var(--out); }
+  #out-confirm { border-top: 3px solid var(--mode); transition: border-color 0.2s; }
   #out-confirm .oc-stock { color: var(--text-dim); font-size: 14px; margin-bottom: 4px; }
   #out-confirm label {
     display: block;
@@ -176,6 +176,7 @@
   }
   #out-confirm .sheet-actions { margin-top: 16px; }
   .btn-out-confirm { background: var(--out); color: #1A0E02; }
+  .btn-in-confirm { background: var(--in); color: #06130A; }
   .menu-btn {
     display: block;
     width: 100%;
@@ -353,7 +354,7 @@
 <div id="out-confirm">
   <h3 id="oc-title"></h3>
   <div class="oc-stock mono" id="oc-stock"></div>
-  <label for="oc-qty">Outgoing quantity</label>
+  <label for="oc-qty" id="oc-qty-label">Outgoing quantity</label>
   <input id="oc-qty" class="mono" inputmode="numeric">
   <div class="sheet-actions">
     <button class="btn btn-cancel" id="oc-cancel">Cancel</button>
@@ -481,7 +482,7 @@ function readout(msg, isError) {
 /* ---------- scanning ---------- */
 function onScan(barcode) {
   const now = Date.now();
-  if (sheetOpen || outConfirmCode) return;
+  if (sheetOpen || confirmCode) return;
   if (barcode === lastBarcode && now - lastScanAt < SCAN_COOLDOWN_MS) return;
   lastBarcode = barcode;
   lastScanAt = now;
@@ -509,18 +510,8 @@ function onScan(barcode) {
     return;
   }
 
-  if (mode === 'out') {
-    if (navigator.vibrate) navigator.vibrate(40);
-    openOutConfirm(barcode, qty);
-    return;
-  }
-
-  const newQty = item.qty + qty;
-  item.qty = newQty;
-  appendLog(barcode, item.name, username, qty, newQty);
-  persist();
   if (navigator.vibrate) navigator.vibrate(40);
-  readout(`${item.name}: +${qty} → ${newQty} in stock`);
+  openScanConfirm(barcode, qty, mode);
 }
 
 function appendLog(barcode, name, username, delta, after) {
@@ -600,45 +591,56 @@ function closeSheet() {
   resumeScanner();
 }
 
-/* ---------- outgoing confirm ---------- */
-let outConfirmCode = null;
+/* ---------- scan confirm ---------- */
+let confirmCode = null;
+let confirmDirection = null;
 
-function openOutConfirm(barcode, qty) {
+function openScanConfirm(barcode, qty, direction) {
   const item = items[barcode];
-  outConfirmCode = barcode;
+  confirmCode = barcode;
+  confirmDirection = direction;
+  const incoming = direction === 'in';
   $('oc-title').textContent = item.name;
   $('oc-stock').textContent = `In stock: ${item.qty}`;
+  $('oc-qty-label').textContent = incoming ? 'Incoming quantity' : 'Outgoing quantity';
+  const btn = $('oc-confirm');
+  btn.textContent = incoming ? 'Confirm In' : 'Confirm Out';
+  btn.className = 'btn ' + (incoming ? 'btn-in-confirm' : 'btn-out-confirm');
   $('oc-qty').value = qty;
   $('out-confirm').classList.add('open');
   $('confirm-backdrop').classList.add('open');
   pauseScanner();
 }
 
-function closeOutConfirm() {
-  outConfirmCode = null;
+function closeScanConfirm() {
+  confirmCode = null;
+  confirmDirection = null;
   $('out-confirm').classList.remove('open');
   $('confirm-backdrop').classList.remove('open');
   lastScanAt = Date.now();
   resumeScanner();
 }
 
-$('confirm-backdrop').addEventListener('click', closeOutConfirm);
-$('oc-cancel').addEventListener('click', closeOutConfirm);
+$('confirm-backdrop').addEventListener('click', closeScanConfirm);
+$('oc-cancel').addEventListener('click', closeScanConfirm);
 $('oc-confirm').addEventListener('click', () => {
-  const code = outConfirmCode;
+  const code = confirmCode;
   const item = items[code];
-  if (!item) { closeOutConfirm(); return; }
+  if (!item) { closeScanConfirm(); return; }
 
   const qty = parseInt($('oc-qty').value, 10);
   if (!Number.isInteger(qty) || qty <= 0) { alert('Quantity must be a positive whole number.'); return; }
-  if (qty > item.qty) { alert(`Outgoing ${qty} exceeds stock (${item.qty}) for ${item.name}.`); return; }
 
-  item.qty -= qty;
-  appendLog(code, item.name, $('username').value.trim(), -qty, item.qty);
+  const delta = confirmDirection === 'in' ? qty : -qty;
+  const newQty = item.qty + delta;
+  if (newQty < 0) { alert(`Outgoing ${qty} exceeds stock (${item.qty}) for ${item.name}.`); return; }
+
+  item.qty = newQty;
+  appendLog(code, item.name, $('username').value.trim(), delta, newQty);
   persist();
-  closeOutConfirm();
+  closeScanConfirm();
   if (navigator.vibrate) navigator.vibrate(40);
-  readout(`${item.name}: -${qty} → ${item.qty} in stock`);
+  readout(`${item.name}: ${delta > 0 ? '+' : ''}${delta} → ${newQty} in stock`);
 });
 
 function pauseScanner() {
