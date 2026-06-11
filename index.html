@@ -131,7 +131,55 @@
     grid-template-columns: 48px 1fr auto;
     gap: 12px;
     align-items: center;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: pan-y;
   }
+  .card.pressed { background: var(--surface-2); }
+
+  #menu-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+  }
+  #menu-backdrop.open { display: block; }
+  #action-menu {
+    position: fixed;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(320px, 84vw);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    display: none;
+  }
+  #action-menu.open { display: block; }
+  #action-menu h3 {
+    font-family: 'Saira Condensed', system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 17px;
+    margin-bottom: 12px;
+    word-break: break-word;
+  }
+  .menu-btn {
+    display: block;
+    width: 100%;
+    border: none;
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .menu-btn.danger { background: none; border: 1px solid var(--danger); color: var(--danger); }
+  .menu-btn.dim { background: none; color: var(--text-dim); margin-bottom: 0; }
   .card img, .card .img-blank {
     width: 48px; height: 48px;
     border-radius: 6px;
@@ -287,6 +335,15 @@
   <button class="tab" data-panel="stock">Stock</button>
   <button class="tab" data-panel="log">Log</button>
 </nav>
+
+<!-- ITEM ACTION MENU -->
+<div id="menu-backdrop"></div>
+<div id="action-menu">
+  <h3 id="menu-title"></h3>
+  <button class="menu-btn" id="menu-edit">Edit Item</button>
+  <button class="menu-btn danger" id="menu-delete">Delete Item</button>
+  <button class="menu-btn dim" id="menu-cancel">Cancel</button>
+</div>
 
 <!-- NEW ITEM SHEET -->
 <div id="sheet-backdrop"></div>
@@ -589,18 +646,22 @@ $('btn-save').addEventListener('click', () => {
 });
 
 $('btn-delete').addEventListener('click', () => {
-  if (!sheetEditCode) return;
-  const item = items[sheetEditCode];
+  if (sheetEditCode) deleteItem(sheetEditCode);
+});
+
+function deleteItem(code) {
+  const item = items[code];
+  if (!item) return;
   const username = $('username').value.trim();
   if (!username) { alert('Deletions are logged — enter a username on the Scan tab first.'); return; }
   if (!confirm(`Delete "${item.name}" and its ${item.qty} in stock? The scan history is kept.`)) return;
 
-  appendLog(sheetEditCode, `${item.name} (deleted)`, username, -item.qty, 0);
-  delete items[sheetEditCode];
+  appendLog(code, `${item.name} (deleted)`, username, -item.qty, 0);
+  delete items[code];
   persist();
   closeSheet();
   renderStock();
-});
+}
 
 /* ---------- stock list ---------- */
 function renderStock() {
@@ -625,10 +686,75 @@ function renderStock() {
       <div class="qty${it.qty === 0 ? ' zero' : ''}">${it.qty}</div>
     </div>`;
   }).join('');
-  container.querySelectorAll('.card').forEach((el) => {
-    el.addEventListener('click', () => openEditSheet(el.dataset.code));
-  });
+  container.querySelectorAll('.card').forEach(attachLongPress);
 }
+
+/* ---------- long press + action menu ---------- */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 12;
+let pressTimer = null;
+let pressX = 0;
+let pressY = 0;
+let menuCode = null;
+
+function attachLongPress(el) {
+  el.addEventListener('pointerdown', (e) => {
+    pressX = e.clientX;
+    pressY = e.clientY;
+    el.classList.add('pressed');
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      el.classList.remove('pressed');
+      if (navigator.vibrate) navigator.vibrate(30);
+      openActionMenu(el.dataset.code);
+    }, LONG_PRESS_MS);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (pressTimer && Math.hypot(e.clientX - pressX, e.clientY - pressY) > LONG_PRESS_MOVE_TOLERANCE_PX) {
+      cancelPress(el);
+    }
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => {
+    el.addEventListener(ev, () => cancelPress(el));
+  });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function cancelPress(el) {
+  el.classList.remove('pressed');
+  if (pressTimer) {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+}
+
+function openActionMenu(code) {
+  const item = items[code];
+  if (!item) return;
+  menuCode = code;
+  $('menu-title').textContent = item.name;
+  $('action-menu').classList.add('open');
+  $('menu-backdrop').classList.add('open');
+}
+
+function closeActionMenu() {
+  menuCode = null;
+  $('action-menu').classList.remove('open');
+  $('menu-backdrop').classList.remove('open');
+}
+
+$('menu-backdrop').addEventListener('click', closeActionMenu);
+$('menu-cancel').addEventListener('click', closeActionMenu);
+$('menu-edit').addEventListener('click', () => {
+  const code = menuCode;
+  closeActionMenu();
+  openEditSheet(code);
+});
+$('menu-delete').addEventListener('click', () => {
+  const code = menuCode;
+  closeActionMenu();
+  deleteItem(code);
+});
 
 /* ---------- log list ---------- */
 function renderLog() {
